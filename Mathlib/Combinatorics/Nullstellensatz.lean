@@ -7,6 +7,7 @@ module
 public import Mathlib.Algebra.MvPolynomial.Monad
 public import Mathlib.RingTheory.MvPolynomial.Groebner
 public import Mathlib.RingTheory.MvPolynomial.MonomialOrder.DegLex
+public import Mathlib.Algebra.MonoidAlgebra.Defs
 
 /-! # Alon's Combinatorial Nullstellensatz
 
@@ -208,12 +209,13 @@ where `h` does not involve `X i`. -/
 private lemma Lason.coeff_recurrence {i : σ} {r : R} {g h f : MvPolynomial σ R}
     (hfgh : f = g * (X i - C r) + h) (hdeg : h.degreeOf i = 0) (m : σ →₀ ℕ) :
     f.coeff (m + single i 1) = g.coeff m - r * g.coeff (m + single i 1) := by
-  have hh : h.coeff (m + single i 1) = 0 := by
-    by_contra hne
-    have hle := monomial_le_degreeOf i (MvPolynomial.mem_support_iff.mpr hne)
-    simp only [hdeg, add_apply, single_eq_same] at hle
-    linarith
-  rw [hfgh, coeff_add, hh, add_zero, mul_sub, coeff_sub, coeff_mul_X, mul_comm g (C r), coeff_C_mul]
+  simp only [hfgh, mul_sub, mul_comm g (C r), AddMonoidAlgebra.coeff_add, coeff_mul_X,
+    AddMonoidAlgebra.coeff_sub, coe_add, coe_sub, Pi.add_apply, Pi.sub_apply, coeff_C_mul,
+    add_eq_left]
+  by_contra! h'
+  have := monomial_le_degreeOf i (MvPolynomial.mem_support_iff.mpr h')
+  simp only [coe_add, Pi.add_apply, single_eq_same] at this
+  lia
 
 /-- If `f.coeff (m + single i c) = 0` for all `c > 0`, then `g.coeff m = 0`, where `g` is the
 quotient in `f = g * (X i - C r) + h` and `h` does not involve `X i`. -/
@@ -221,23 +223,19 @@ private lemma Lason.coeff_quotient_eq_zero {i : σ} {r : R} {g h f : MvPolynomia
     (hfgh : f = g * (X i - C r) + h) (hdeg : h.degreeOf i = 0)
     (m : σ →₀ ℕ) (hm : ∀ c, 0 < c → f.coeff (m + single i c) = 0) :
     g.coeff m = 0 := by
-  have key : ∀ N : ℕ, g.coeff m = r ^ N * g.coeff (m + single i N) := by
-    intro N
-    induction N with
+  have key (n : ℕ) : g.coeff m = r ^ n * g.coeff (m + single i n) := by
+    induction n with
     | zero => simp
-    | succ N ih =>
-      have hrec := Lason.coeff_recurrence hfgh hdeg (m + single i N)
-      rw [add_assoc, ← single_add, hm (N + 1) N.succ_pos, eq_comm, sub_eq_zero] at hrec
+    | succ n ih =>
+      have hrec := Lason.coeff_recurrence hfgh hdeg (m + single i n)
+      rw [add_assoc, ← single_add, hm (n + 1) n.succ_pos, eq_comm, sub_eq_zero] at hrec
       rw [ih, hrec]
       ring
   rw [key (g.totalDegree + 1)]
-  apply mul_eq_zero_of_right
-  apply coeff_eq_zero_of_totalDegree_lt
-  have hmem : i ∈ (m + single i (g.totalDegree + 1)).support := by
-    simp [add_apply, single_eq_same]
-  refine lt_of_lt_of_le ?_
-    (Finset.single_le_sum (f := m + single i (g.totalDegree + 1)) (fun _ _ ↦ Nat.zero_le _) hmem)
-  simp only [single_add, coe_add, Pi.add_apply, single_eq_same]
+  refine mul_eq_zero_of_right _ (coeff_eq_zero_of_totalDegree_lt ?_)
+  have hmem : i ∈ (m + single i (g.totalDegree + 1)).support := by simp
+  refine lt_of_lt_of_le ?_ (Finset.single_le_sum (fun _ _ ↦ Nat.zero_le _) hmem)
+  simp only [coe_add, Pi.add_apply, single_eq_same]
   linarith
 
 /-- The **Generalized Combinatorial Nullstellensatz**.
@@ -273,9 +271,8 @@ theorem combinatorial_nullstellensatz_exists_eval_nonzero_of_maximal
     by_cases ht : t = 0
     · rw [constantCoeff_eq, coeff_C, ht]
       rfl
-    · simp_rw [htmax t (Ne.pos ht), coeff_C, right_eq_ite_iff]
-      rintro rfl
-      exact (ht rfl).elim
+    · rw [htmax _ (pos_of_ne_zero ht), coeff_C, right_eq_ite_iff]
+      exact fun h ↦ ((h ▸ ht) rfl).elim
   | succ n ih =>
     intro f t ht htc htmax S hScard
     obtain ⟨i, hi⟩ : t.support.Nonempty :=
@@ -291,8 +288,11 @@ theorem combinatorial_nullstellensatz_exists_eval_nonzero_of_maximal
     · obtain ⟨y, _, hy⟩ := hy
       refine ⟨Function.update y i r, by grind, ?_⟩
       rw [hfgh, map_add, map_mul, map_sub, eval_X, eval_C, Function.update_self, sub_self, mul_zero,
-        zero_add, eval_update_of_notMem_vars (mem_vars_iff_degreeOf_ne_zero.mp · hdeg) y r]
-      exact hy
+        zero_add]
+      convert hy using 1
+      refine eval₂Hom_congr' rfl (fun _ h _ ↦ Function.update_of_ne ?_ _ _) rfl
+      rintro rfl
+      exact mem_vars_iff_degreeOf_ne_zero.mp h hdeg
     · simp only [not_exists, not_and, not_not] at hy
       set t₀ := t - single i 1 with ht₀def
       have hcancel : t₀ + single i 1 = t := ht₀def ▸ sub_add_single_one_cancel hi
@@ -307,19 +307,18 @@ theorem combinatorial_nullstellensatz_exists_eval_nonzero_of_maximal
         rintro rfl
         obtain ⟨j, hj⟩ := ne_iff.mp hne
         have : t₀ j < u j := lt_of_le_of_ne (hle _) hj
-        have htj : (u + single i c) j = t₀ j + (single i 1) j := by rw [← hcancel, add_apply]
-        simp only [coe_add, Pi.add_apply] at htj
+        have : u j + single i c j = t₀ j + (single i 1) j := by
+          rw [← Pi.add_apply, ← coe_add, ← hcancel, add_apply]
         grind only [single_apply]
       set S' : σ → Finset R := Function.update S i ((S i).erase r) with hS'def
-      have hScard' (j : σ) : t₀ j < #(S' j) := by
-        grind only [tsub_apply, Function.update, single_apply, Finset.card_erase_of_mem]
-      obtain ⟨s, hs, hsg⟩ :=
-        ih g t₀ (by grind only [map_add, degree_single]) (hB ▸ htc) hgmax S' hScard'
+      obtain ⟨s, hs, hsg⟩ := ih g t₀ (by grind only [map_add, degree_single]) (hB ▸ htc) hgmax
+        (Function.update S i ((S i).erase r)) <| by
+          grind only [tsub_apply, Function.update, single_apply, Finset.card_erase_of_mem]
       have hsS : ∀ j, s j ∈ S j := by grind only [Function.update, Finset.mem_erase]
       refine ⟨s, hsS, ?_⟩
       rw [hfgh, map_add, map_mul, map_sub, eval_X, eval_C, hy s hsS, add_zero]
       exact mul_ne_zero hsg (sub_ne_zero.mpr
-        (Finset.mem_erase.mp (Function.update_self i _ _ ▸ (hS'def ▸ hs i))).1)
+        (Finset.mem_erase.mp (Function.update_self i _ _ ▸ (hs i))).1)
 
 /-- The **Combinatorial Nullstellensatz**.
 
